@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet --version)",
+      "Bash(dotnet --list-sdks)",
+      "Bash(javac --version)",
+      "Bash(winget --version)",
+      "Bash(pip list *)",
+      "Bash(npm *)",
+      "Bash(npx electron *)",
+      "Bash(./gradlew assembleDebug)",
+      "Bash(./gradlew assembleDebug --no-daemon)",
+      "Bash(./gradlew --stop)",
+      "Bash(grep -i \"error\\\\|unresolved\\\\|file:///\")",
+      "Bash(./gradlew compileDebugKotlin)"
+    ]
+  }
+}
