@@ -33,16 +33,19 @@ jobs:
       - name: Build release APK
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
-      - name: Get APK path
-        id: apk_path
-        run: echo "apks=$(find app/build/outputs/apk/release -name '*.apk' -type f | tr '\n' ',')" >> $GITHUB_OUTPUT
+      - name: Rename APK
+        run: |
+          cd app/build/outputs/apk/release
+          for f in *.apk; do
+            mv "$f" "EasyTimer-${{ github.event.inputs.version }}.apk"
+          done
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release and upload APK
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.event.inputs.version }}
           name: Release ${{ github.event.inputs.version }}
-          files: ${{ steps.apk_path.outputs.apks }}
+          files: app/build/outputs/apk/release/EasyTimer-${{ github.event.inputs.version }}.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
