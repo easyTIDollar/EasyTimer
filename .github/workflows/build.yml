@@ -44,3 +44,5 @@ jobs:
           name: Release ${{ github.event.inputs.version }}
           files: ${{ steps.apk_path.outputs.apks }}
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
