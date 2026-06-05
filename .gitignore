@@ -13,6 +13,7 @@
 /.externalNativeBuild
 /.cxx
 /.gradle/
+!/gradle/wrapper/gradle-wrapper.jar
 *.jar
 /.idea/
 *.apk
