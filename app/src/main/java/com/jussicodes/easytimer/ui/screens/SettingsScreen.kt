@@ -18,7 +18,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,6 +40,7 @@ import com.jussicodes.easytimer.viewmodel.MainViewModel
 fun SettingsScreen(viewModel: MainViewModel) {
     val selfDestruct by viewModel.selfDestruct.collectAsState()
     val isRootAvailable by viewModel.isRootAvailable.collectAsState()
+    val updateUiState by viewModel.updateUiState.collectAsState()
 
     BackHandler { viewModel.navigateToHome() }
 
@@ -110,9 +113,84 @@ fun SettingsScreen(viewModel: MainViewModel) {
                     )
                 }
             }
+
+            Divider(modifier = Modifier.padding(vertical = 20.dp))
+
+            Text(
+                text = "版本更新",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            VersionInfoRow(
+                currentVersion = updateUiState.currentVersion,
+                latestVersion = updateUiState.latestVersion ?: "未检查",
+                statusText = updateUiState.statusText
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = {
+                    if (updateUiState.hasUpdate) {
+                        viewModel.downloadAndInstallUpdate()
+                    } else {
+                        viewModel.checkForUpdates()
+                    }
+                },
+                enabled = !updateUiState.isChecking && !updateUiState.isDownloading,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = when {
+                        updateUiState.isChecking -> "正在检查..."
+                        updateUiState.isDownloading -> "正在下载..."
+                        updateUiState.hasUpdate -> "下载并安装"
+                        else -> "检查更新"
+                    }
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(32.dp))
+    }
+}
+
+@Composable
+private fun VersionInfoRow(
+    currentVersion: String,
+    latestVersion: String,
+    statusText: String
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Default.Info,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "当前版本：$currentVersion",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                text = "最新版本：$latestVersion",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

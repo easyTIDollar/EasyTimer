@@ -3,6 +3,8 @@
 
 import android.app.Application
 
+import android.app.DownloadManager
+
 import android.app.ForegroundServiceStartNotAllowedException
 
 import android.content.Intent
@@ -10,6 +12,12 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 
 import android.content.pm.PackageManager
+
+import android.net.Uri
+
+import android.os.Build
+
+import android.os.Environment
 
 import android.graphics.Bitmap
 
@@ -26,6 +34,8 @@ import java.io.IOException
 import androidx.lifecycle.AndroidViewModel
 
 import androidx.lifecycle.viewModelScope
+
+import com.jussicodes.easytimer.BuildConfig
 
 import com.jussicodes.easytimer.data.PreferencesRepository
 
@@ -57,8 +67,33 @@ import kotlinx.coroutines.launch
 
 import kotlinx.coroutines.withContext
 
+import org.json.JSONObject
+
+import java.net.HttpURLConnection
+
+import java.net.URL
+
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+
+    data class UpdateUiState(
+        val currentVersion: String = BuildConfig.VERSION_NAME,
+        val latestVersion: String? = null,
+        val statusText: String = "点击检查更新",
+        val apkUrl: String? = null,
+        val isChecking: Boolean = false,
+        val isDownloading: Boolean = false,
+        val hasUpdate: Boolean = false
+    )
+
+    private data class ReleaseInfo(
+        val version: String,
+        val apkUrl: String
+    )
+
+    private companion object {
+        const val LATEST_RELEASE_URL = "https://api.github.com/repos/easyTIDollar/EasyTimer/releases/latest"
+    }
 
 
     private val prefs = PreferencesRepository(application)
@@ -139,6 +174,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selfDestruct = MutableStateFlow(false)
 
     val selfDestruct: StateFlow<Boolean> = _selfDestruct.asStateFlow()
+
+
+    private val _updateUiState = MutableStateFlow(UpdateUiState())
+
+    val updateUiState: StateFlow<UpdateUiState> = _updateUiState.asStateFlow()
 
 
     // Self-destruct toggle
@@ -377,6 +417,105 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             prefs.setSelfDestructEnabled(enabled)
             _selfDestruct.value = enabled
+        }
+    }
+
+
+    fun checkForUpdates() {
+        if (_updateUiState.value.isChecking || _updateUiState.value.isDownloading) return
+
+        viewModelScope.launch {
+            _updateUiState.value = _updateUiState.value.copy(
+                isChecking = true,
+                statusText = "正在检查更新..."
+            )
+
+            val release = withContext(Dispatchers.IO) {
+                runCatching { fetchLatestRelease() }.getOrNull()
+            }
+
+            if (release == null) {
+                _updateUiState.value = _updateUiState.value.copy(
+                    isChecking = false,
+                    statusText = "检查失败，稍后重试"
+                )
+                return@launch
+            }
+
+            val versionCompare = compareVersions(release.version, BuildConfig.VERSION_NAME)
+            val hasUpdate = versionCompare > 0
+            _updateUiState.value = _updateUiState.value.copy(
+                latestVersion = release.version,
+                apkUrl = release.apkUrl,
+                isChecking = false,
+                hasUpdate = hasUpdate,
+                statusText = when {
+                    hasUpdate -> "发现新版本，点击下载并安装"
+                    versionCompare < 0 -> "当前版本高于发布版本"
+                    else -> "已是最新版本"
+                }
+            )
+        }
+    }
+
+
+    fun downloadAndInstallUpdate() {
+        val state = _updateUiState.value
+        val apkUrl = state.apkUrl
+        if (!state.hasUpdate || apkUrl.isNullOrBlank() || state.isDownloading) {
+            checkForUpdates()
+            return
+        }
+
+        viewModelScope.launch {
+            _updateUiState.value = state.copy(
+                isDownloading = true,
+                statusText = "正在下载更新..."
+            )
+
+            val context = getApplication<Application>()
+            val downloadId = withContext(Dispatchers.IO) {
+                runCatching {
+                    val request = DownloadManager.Request(Uri.parse(apkUrl))
+                        .setTitle("EasyTimer ${state.latestVersion}")
+                        .setDescription("正在下载 EasyTimer 更新")
+                        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                        .setDestinationInExternalFilesDir(
+                            context,
+                            Environment.DIRECTORY_DOWNLOADS,
+                            "EasyTimer-v${state.latestVersion}.apk"
+                        )
+                        .setMimeType("application/vnd.android.package-archive")
+                    val manager = context.getSystemService(DownloadManager::class.java)
+                    manager.enqueue(request)
+                }.getOrNull()
+            }
+
+            if (downloadId == null) {
+                _updateUiState.value = _updateUiState.value.copy(
+                    isDownloading = false,
+                    statusText = "下载失败，稍后重试"
+                )
+                return@launch
+            }
+
+            val apkUri = withContext(Dispatchers.IO) {
+                waitForDownloadedApk(downloadId)
+            }
+
+            if (apkUri == null) {
+                _updateUiState.value = _updateUiState.value.copy(
+                    isDownloading = false,
+                    statusText = "下载失败，稍后重试"
+                )
+                return@launch
+            }
+
+            _updateUiState.value = _updateUiState.value.copy(
+                isDownloading = false,
+                statusText = "下载完成，正在打开安装器"
+            )
+            openApkInstaller(apkUri)
         }
     }
 
@@ -634,6 +773,104 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         getApplication<Application>().startService(intent)
 
+    }
+
+
+    private fun fetchLatestRelease(): ReleaseInfo {
+        val connection = (URL(LATEST_RELEASE_URL).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 10_000
+            readTimeout = 10_000
+            requestMethod = "GET"
+            setRequestProperty("User-Agent", "EasyTimer/${BuildConfig.VERSION_NAME}")
+        }
+
+        return try {
+            if (connection.responseCode !in 200..299) {
+                throw IOException("GitHub release request failed: ${connection.responseCode}")
+            }
+
+            val body = connection.inputStream.bufferedReader().use { reader -> reader.readText() }
+            val json = JSONObject(body)
+            val version = json.getString("tag_name").removePrefix("v")
+            val assets = json.getJSONArray("assets")
+            var apkUrl = ""
+            for (i in 0 until assets.length()) {
+                val asset = assets.getJSONObject(i)
+                val name = asset.optString("name")
+                val url = asset.optString("browser_download_url")
+                if (name.endsWith(".apk", ignoreCase = true) && url.isNotBlank()) {
+                    apkUrl = url
+                    break
+                }
+            }
+
+            if (apkUrl.isBlank()) {
+                throw IOException("No APK asset found in latest release")
+            }
+
+            ReleaseInfo(version = version, apkUrl = apkUrl)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+
+    private fun waitForDownloadedApk(downloadId: Long): Uri? {
+        val context = getApplication<Application>()
+        val manager = context.getSystemService(DownloadManager::class.java)
+        val query = DownloadManager.Query().setFilterById(downloadId)
+
+        repeat(180) {
+            manager.query(query)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                    val status = cursor.getInt(statusIndex)
+                    when (status) {
+                        DownloadManager.STATUS_SUCCESSFUL -> return manager.getUriForDownloadedFile(downloadId)
+                        DownloadManager.STATUS_FAILED -> return null
+                    }
+                }
+            }
+            Thread.sleep(1_000)
+        }
+
+        return null
+    }
+
+
+    private fun openApkInstaller(apkUri: Uri) {
+        val context = getApplication<Application>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
+            val intent = Intent(
+                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:${context.packageName}")
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            Toast.makeText(context, "请允许 EasyTimer 安装未知来源应用后再安装更新", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(intent)
+    }
+
+
+    private fun compareVersions(left: String, right: String): Int {
+        val leftParts = left.split(".").map { it.toIntOrNull() ?: 0 }
+        val rightParts = right.split(".").map { it.toIntOrNull() ?: 0 }
+        val maxSize = maxOf(leftParts.size, rightParts.size)
+
+        for (i in 0 until maxSize) {
+            val l = leftParts.getOrElse(i) { 0 }
+            val r = rightParts.getOrElse(i) { 0 }
+            if (l != r) return l.compareTo(r)
+        }
+
+        return 0
     }
 
 
