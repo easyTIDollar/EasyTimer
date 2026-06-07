@@ -249,6 +249,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         observeServiceState()
 
+        checkLatestVersionSilently()
+
     }
 
 
@@ -441,20 +443,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
-            val versionCompare = compareVersions(release.version, BuildConfig.VERSION_NAME)
-            val hasUpdate = versionCompare > 0
-            _updateUiState.value = _updateUiState.value.copy(
-                latestVersion = release.version,
-                apkUrl = release.apkUrl,
-                isChecking = false,
-                hasUpdate = hasUpdate,
-                statusText = when {
-                    hasUpdate -> "发现新版本，点击下载并安装"
-                    versionCompare < 0 -> "当前版本高于发布版本"
-                    else -> "已是最新版本"
-                }
-            )
+            applyReleaseInfo(release, isChecking = false)
         }
+    }
+
+
+    private fun checkLatestVersionSilently() {
+        viewModelScope.launch {
+            val release = withContext(Dispatchers.IO) {
+                runCatching { fetchLatestRelease() }.getOrNull()
+            } ?: return@launch
+
+            applyReleaseInfo(release, isChecking = false)
+        }
+    }
+
+
+    private fun applyReleaseInfo(release: ReleaseInfo, isChecking: Boolean) {
+        val versionCompare = compareVersions(release.version, BuildConfig.VERSION_NAME)
+        val hasUpdate = versionCompare > 0
+        _updateUiState.value = _updateUiState.value.copy(
+            latestVersion = release.version,
+            apkUrl = release.apkUrl,
+            isChecking = isChecking,
+            hasUpdate = hasUpdate,
+            statusText = when {
+                hasUpdate -> "发现新版本，点击下载并安装"
+                versionCompare < 0 -> "当前版本高于发布版本"
+                else -> "已是最新版本"
+            }
+        )
     }
 
 
