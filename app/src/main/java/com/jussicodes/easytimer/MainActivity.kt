@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -62,23 +63,25 @@ private fun AppContent() {
     val screen by viewModel.currentScreen.collectAsState()
     val selectedApp by viewModel.selectedApp.collectAsState()
 
-    when (screen) {
-        Screen.HOME -> {
-            HomeScreen(viewModel = viewModel)
-        }
-        Screen.TIMER_SETUP -> {
-            val app = selectedApp
-            if (app != null) {
-                TimerSetupScreen(viewModel = viewModel, app = app)
-            } else {
+    Crossfade(targetState = screen, label = "screenTransition") { targetScreen ->
+        when (targetScreen) {
+            Screen.HOME -> {
                 HomeScreen(viewModel = viewModel)
             }
-        }
-        Screen.ACTIVE_TIMER -> {
-            ActiveTimerScreen(viewModel = viewModel)
-        }
-        Screen.SETTINGS -> {
-            SettingsScreen(viewModel = viewModel)
+            Screen.TIMER_SETUP -> {
+                val app = selectedApp
+                if (app != null) {
+                    TimerSetupScreen(viewModel = viewModel, app = app)
+                } else {
+                    HomeScreen(viewModel = viewModel)
+                }
+            }
+            Screen.ACTIVE_TIMER -> {
+                ActiveTimerScreen(viewModel = viewModel)
+            }
+            Screen.SETTINGS -> {
+                SettingsScreen(viewModel = viewModel)
+            }
         }
     }
 }

@@ -1,7 +1,9 @@
 package com.jussicodes.easytimer.ui.screens
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.background
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,30 +17,36 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jussicodes.easytimer.model.TimerState
+import com.jussicodes.easytimer.ui.pressScale
 import com.jussicodes.easytimer.viewmodel.MainViewModel
 
 @Composable
@@ -50,12 +58,14 @@ fun ActiveTimerScreen(viewModel: MainViewModel) {
     val remainingSeconds = state.remainingSeconds
     val totalSeconds = state.totalSeconds
     val isPaused = state.isPaused
-    val progress = if (totalSeconds > 0) remainingSeconds.toFloat() / totalSeconds else 0f
+    val progressTarget = if (totalSeconds > 0) remainingSeconds.toFloat() / totalSeconds else 0f
+    val progress by animateFloatAsState(progressTarget.coerceIn(0f, 1f), label = "timerProgress")
 
     val progressColor by animateColorAsState(
         targetValue = when {
-            remainingSeconds <= 60 -> Color(0xFFE53935)
-            remainingSeconds <= 300 -> Color(0xFFFFA726)
+            isPaused -> MaterialTheme.colorScheme.outline
+            remainingSeconds <= 60 -> MaterialTheme.colorScheme.error
+            remainingSeconds <= 300 -> Color(0xFFFFC86A)
             else -> MaterialTheme.colorScheme.primary
         },
         label = "progressColor"
@@ -66,138 +76,173 @@ fun ActiveTimerScreen(viewModel: MainViewModel) {
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
+            .padding(horizontal = 22.dp, vertical = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // App name
-        Text(
-            text = state.appName,
-            style = MaterialTheme.typography.headlineMedium,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            text = if (isPaused) "已暂停" else "将会在以下时间后关闭",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Circular progress
-        Box(
-            modifier = Modifier.size(220.dp),
-            contentAlignment = Alignment.Center
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            // Background circle
-            Box(
-                modifier = Modifier
-                    .size(200.dp)
-                    .background(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                        shape = CircleShape
-                    )
-            )
-            // Progress arc (simplified as a ring using Canvas alternative)
-            // Using a simple filled arc effect via background
-            androidx.compose.foundation.Canvas(modifier = Modifier.size(200.dp)) {
-                val sw = 10.dp.toPx()
-                val halfSw = sw / 2f
-                drawArc(
-                    color = progressColor,
-                    startAngle = -90f,
-                    sweepAngle = 360f * progress,
-                    useCenter = false,
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(
-                        width = sw,
-                        cap = androidx.compose.ui.graphics.StrokeCap.Round
-                    ),
-                    topLeft = androidx.compose.ui.geometry.Offset(halfSw, halfSw),
-                    size = androidx.compose.ui.geometry.Size(size.width - sw, size.height - sw)
-                )
-            }
-            // Time display
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(modifier = Modifier.padding(18.dp)) {
                 Text(
-                    text = formatTime(remainingSeconds),
-                    fontSize = 48.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isPaused) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                    text = state.appName,
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                if (isPaused) {
-                    Text(
-                        text = "已暂停",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (isPaused) "计时已暂停" else "将在倒计时结束后强制关闭",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.weight(0.6f))
+
+        TimerRing(
+            remainingSeconds = remainingSeconds,
+            progress = progress,
+            progressColor = progressColor,
+            isPaused = isPaused
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
         Text(
-            text = "共 ${formatMinutes(totalSeconds)}",
+            text = "总时长 ${formatMinutes(totalSeconds)}",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        Spacer(modifier = Modifier.height(48.dp))
+        Spacer(modifier = Modifier.weight(1f))
 
-        // Control buttons
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Cancel
-            OutlinedButton(
-                onClick = viewModel::cancelTimer,
+            TimerActionButton(
+                text = "取消",
+                filled = false,
                 modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text("取消")
-            }
-
-            // Pause / Resume
-            Button(
-                onClick = { if (isPaused) viewModel.resumeTimer() else viewModel.pauseTimer() },
+                onClick = viewModel::cancelTimer
+            )
+            TimerActionButton(
+                text = if (isPaused) "继续" else "暂停",
+                filled = true,
                 modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                if (isPaused) {
-                    androidx.compose.material3.Icon(Icons.Default.PlayArrow, contentDescription = null)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("继续")
-                } else {
-                    androidx.compose.material3.Icon(Icons.Default.Pause, contentDescription = null)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("暂停")
-                }
-            }
+                icon = if (isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                onClick = { if (isPaused) viewModel.resumeTimer() else viewModel.pauseTimer() }
+            )
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Force stop now
-        OutlinedButton(
-            onClick = viewModel::forceStopNow,
+        TimerActionButton(
+            text = "立即关闭",
+            filled = false,
+            danger = true,
+            icon = Icons.Default.Stop,
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = MaterialTheme.colorScheme.error
+            onClick = viewModel::forceStopNow
+        )
+    }
+}
+
+@Composable
+private fun TimerRing(
+    remainingSeconds: Int,
+    progress: Float,
+    progressColor: Color,
+    isPaused: Boolean
+) {
+    Box(
+        modifier = Modifier.size(248.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.size(232.dp)) {
+            val strokeWidth = 12.dp.toPx()
+            val inset = strokeWidth / 2f
+            val arcSize = Size(size.width - strokeWidth, size.height - strokeWidth)
+            drawArc(
+                color = Color.White.copy(alpha = 0.08f),
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = Offset(inset, inset),
+                size = arcSize,
+                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
             )
+            drawArc(
+                color = progressColor,
+                startAngle = -90f,
+                sweepAngle = 360f * progress,
+                useCenter = false,
+                topLeft = Offset(inset, inset),
+                size = arcSize,
+                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
+            )
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = formatTime(remainingSeconds),
+                fontSize = 46.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                color = if (isPaused) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = if (isPaused) "已暂停" else "${(progress * 100).toInt()}%",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun TimerActionButton(
+    text: String,
+    filled: Boolean,
+    modifier: Modifier,
+    danger: Boolean = false,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val scaled = modifier
+        .height(54.dp)
+        .pressScale(interactionSource)
+
+    if (filled) {
+        Button(
+            onClick = onClick,
+            interactionSource = interactionSource,
+            shape = RoundedCornerShape(18.dp),
+            modifier = scaled
         ) {
-            androidx.compose.material3.Icon(
-                Icons.Default.Stop,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.error
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("立即关闭", color = MaterialTheme.colorScheme.error)
+            icon?.let {
+                Icon(it, contentDescription = null)
+                Spacer(modifier = Modifier.width(6.dp))
+            }
+            Text(text, style = MaterialTheme.typography.titleSmall)
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            interactionSource = interactionSource,
+            shape = RoundedCornerShape(18.dp),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+            ),
+            modifier = scaled
+        ) {
+            icon?.let {
+                Icon(it, contentDescription = null)
+                Spacer(modifier = Modifier.width(6.dp))
+            }
+            Text(text, style = MaterialTheme.typography.titleSmall)
         }
     }
 }
