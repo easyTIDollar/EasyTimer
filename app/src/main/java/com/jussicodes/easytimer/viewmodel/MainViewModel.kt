@@ -67,8 +67,6 @@ import kotlinx.coroutines.launch
 
 import kotlinx.coroutines.withContext
 
-import org.json.JSONObject
-
 import java.net.HttpURLConnection
 
 import java.net.URL
@@ -92,7 +90,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private companion object {
-        const val LATEST_RELEASE_URL = "https://api.github.com/repos/easyTIDollar/EasyTimer/releases/latest"
+        const val LATEST_RELEASE_URL = "https://github.com/easyTIDollar/EasyTimer/releases/latest"
+        const val RELEASE_DOWNLOAD_URL = "https://github.com/easyTIDollar/EasyTimer/releases/download"
     }
 
 
@@ -781,37 +780,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             connectTimeout = 10_000
             readTimeout = 10_000
             requestMethod = "GET"
+            instanceFollowRedirects = false
             setRequestProperty("User-Agent", "EasyTimer/${BuildConfig.VERSION_NAME}")
         }
 
         return try {
-            if (connection.responseCode !in 200..299) {
+            if (connection.responseCode !in 300..399) {
                 throw IOException("GitHub release request failed: ${connection.responseCode}")
             }
 
-            val body = connection.inputStream.bufferedReader().use { reader -> reader.readText() }
-            val json = JSONObject(body)
-            val version = json.getString("tag_name").removePrefix("v")
-            val assets = json.getJSONArray("assets")
-            var apkUrl = ""
-            for (i in 0 until assets.length()) {
-                val asset = assets.getJSONObject(i)
-                val name = asset.optString("name")
-                val url = asset.optString("browser_download_url")
-                if (name.endsWith(".apk", ignoreCase = true) && url.isNotBlank()) {
-                    apkUrl = url
-                    break
-                }
+            val location = connection.getHeaderField("Location").orEmpty()
+            val version = location.substringAfterLast("/").removePrefix("v")
+            if (version.isBlank() || version == location) {
+                throw IOException("Failed to read latest release tag")
             }
-
-            if (apkUrl.isBlank()) {
-                throw IOException("No APK asset found in latest release")
-            }
-
-            ReleaseInfo(version = version, apkUrl = apkUrl)
+            ReleaseInfo(version = version, apkUrl = buildApkUrl(version))
         } finally {
             connection.disconnect()
         }
+    }
+
+
+    private fun buildApkUrl(version: String): String {
+        return "$RELEASE_DOWNLOAD_URL/v$version/EasyTimer-v$version.apk"
     }
 
 
