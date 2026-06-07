@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.CountDownTimer
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import com.jussicodes.easytimer.data.PreferencesRepository
 import com.jussicodes.easytimer.MainActivity
 import com.jussicodes.easytimer.model.TimerState
 import com.jussicodes.easytimer.root.RootShellManager
@@ -41,6 +42,8 @@ class TimerForegroundService : Service() {
         const val EXTRA_PACKAGE_NAME = "package_name"
         const val EXTRA_APP_NAME = "app_name"
         const val EXTRA_DURATION_MINUTES = "duration_minutes"
+        const val EXTRA_TOTAL_SECONDS = "total_seconds"
+        const val EXTRA_DURATION_SECONDS = "duration_seconds"
         const val EXTRA_SELF_DESTRUCT = "selfdestruct"
 
         private val _timerState = MutableStateFlow<TimerState>(TimerState.Idle)
@@ -56,9 +59,11 @@ class TimerForegroundService : Service() {
     private var selfDestruct: Boolean = false
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private lateinit var prefs: PreferencesRepository
 
     override fun onCreate() {
         super.onCreate()
+        prefs = PreferencesRepository(applicationContext)
         createNotificationChannel()
     }
 
@@ -68,8 +73,8 @@ class TimerForegroundService : Service() {
                 packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
                 appName = intent.getStringExtra(EXTRA_APP_NAME) ?: ""
                 val minutes = intent.getIntExtra(EXTRA_DURATION_MINUTES, 15)
-                totalSeconds = minutes * 60
-                remainingSeconds = totalSeconds
+                remainingSeconds = intent.getIntExtra(EXTRA_DURATION_SECONDS, minutes * 60)
+                totalSeconds = intent.getIntExtra(EXTRA_TOTAL_SECONDS, remainingSeconds)
                 isPaused = false
                 selfDestruct = intent.getBooleanExtra(EXTRA_SELF_DESTRUCT, false)
                 startCountdown()
@@ -87,6 +92,7 @@ class TimerForegroundService : Service() {
 
     private fun startCountdown() {
         countDownTimer?.cancel()
+        persistActiveTimer()
 
         countDownTimer = object : CountDownTimer(remainingSeconds * 1000L, 1000L) {
             override fun onTick(millisUntilFinished: Long) {
@@ -109,6 +115,7 @@ class TimerForegroundService : Service() {
             isPaused = true
             countDownTimer?.cancel()
             emitState()
+            persistActiveTimer()
             updateNotification()
         }
     }
@@ -131,6 +138,7 @@ class TimerForegroundService : Service() {
     private fun cancelTimer() {
         countDownTimer?.cancel()
         _timerState.value = TimerState.Idle
+        clearPersistedTimer()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -154,6 +162,7 @@ class TimerForegroundService : Service() {
             } catch (_: Exception) {}
 
             _timerState.value = TimerState.Idle
+            clearPersistedTimer()
 
             val closedNotification = NotificationCompat.Builder(this@TimerForegroundService, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -179,6 +188,26 @@ class TimerForegroundService : Service() {
             remainingSeconds = remainingSeconds,
             isPaused = isPaused
         )
+    }
+
+    private fun persistActiveTimer() {
+        val endAtMillis = if (isPaused) 0L else System.currentTimeMillis() + remainingSeconds * 1000L
+        serviceScope.launch(Dispatchers.IO) {
+            prefs.saveActiveTimer(
+                packageName = packageName,
+                appName = appName,
+                totalSeconds = totalSeconds,
+                remainingSeconds = remainingSeconds,
+                isPaused = isPaused,
+                endAtMillis = endAtMillis
+            )
+        }
+    }
+
+    private fun clearPersistedTimer() {
+        serviceScope.launch(Dispatchers.IO) {
+            prefs.clearActiveTimer()
+        }
     }
 
     private fun killSelf() {

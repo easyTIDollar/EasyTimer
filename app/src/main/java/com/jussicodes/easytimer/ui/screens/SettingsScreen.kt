@@ -25,6 +25,7 @@ import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -126,10 +127,22 @@ fun SettingsScreen(viewModel: MainViewModel) {
             VersionInfoRow(
                 currentVersion = updateUiState.currentVersion,
                 latestVersion = updateUiState.latestVersion ?: "未检查",
-                statusText = updateUiState.statusText
+                statusText = updateUiState.statusText,
+                canInstallUpdates = updateUiState.canInstallUpdates,
+                onInstallPermissionClick = viewModel::openInstallPermissionSettings
             )
 
             Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedButton(
+                onClick = viewModel::openReleaseNotes,
+                enabled = updateUiState.releasePageUrl != null,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("查看发布说明")
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             Button(
                 onClick = {
@@ -161,7 +174,9 @@ fun SettingsScreen(viewModel: MainViewModel) {
 private fun VersionInfoRow(
     currentVersion: String,
     latestVersion: String,
-    statusText: String
+    statusText: String,
+    canInstallUpdates: Boolean,
+    onInstallPermissionClick: () -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -189,6 +204,16 @@ private fun VersionInfoRow(
                 text = statusText,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = if (canInstallUpdates) "安装更新权限：已允许" else "安装更新权限：未允许，点击授权",
+                modifier = Modifier.clickable(enabled = !canInstallUpdates, onClick = onInstallPermissionClick),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (canInstallUpdates) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.primary
+                }
             )
         }
     }

@@ -37,6 +37,8 @@ import androidx.lifecycle.viewModelScope
 
 import com.jussicodes.easytimer.BuildConfig
 
+import com.jussicodes.easytimer.data.PersistedTimer
+
 import com.jussicodes.easytimer.data.PreferencesRepository
 
 import com.jussicodes.easytimer.model.AppInfo
@@ -79,14 +81,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val latestVersion: String? = null,
         val statusText: String = "点击检查更新",
         val apkUrl: String? = null,
+        val releasePageUrl: String? = null,
         val isChecking: Boolean = false,
         val isDownloading: Boolean = false,
+        val canInstallUpdates: Boolean = false,
         val hasUpdate: Boolean = false
     )
 
     private data class ReleaseInfo(
         val version: String,
-        val apkUrl: String
+        val apkUrl: String,
+        val releasePageUrl: String
     )
 
     private companion object {
@@ -175,7 +180,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val selfDestruct: StateFlow<Boolean> = _selfDestruct.asStateFlow()
 
 
-    private val _updateUiState = MutableStateFlow(UpdateUiState())
+    private val _updateUiState = MutableStateFlow(
+        UpdateUiState(canInstallUpdates = canInstallUpdateApks())
+    )
 
     val updateUiState: StateFlow<UpdateUiState> = _updateUiState.asStateFlow()
 
@@ -239,6 +246,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
 
     private var allAppsLoaded = false
+    private var restoredTimerKey: String? = null
 
 
     init {
@@ -248,6 +256,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         observePreferences()
 
         observeServiceState()
+
+        observePersistedTimer()
+
+        loadAllApps()
 
         checkLatestVersionSilently()
 
@@ -462,12 +474,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun applyReleaseInfo(release: ReleaseInfo, isChecking: Boolean) {
         val versionCompare = compareVersions(release.version, BuildConfig.VERSION_NAME)
         val hasUpdate = versionCompare > 0
-        _updateUiState.value = _updateUiState.value.copy(
-            latestVersion = release.version,
-            apkUrl = release.apkUrl,
-            isChecking = isChecking,
-            hasUpdate = hasUpdate,
-            statusText = when {
+            _updateUiState.value = _updateUiState.value.copy(
+                latestVersion = release.version,
+                apkUrl = release.apkUrl,
+                releasePageUrl = release.releasePageUrl,
+                isChecking = isChecking,
+                canInstallUpdates = canInstallUpdateApks(),
+                hasUpdate = hasUpdate,
+                statusText = when {
                 hasUpdate -> "发现新版本，点击下载并安装"
                 versionCompare < 0 -> "当前版本高于发布版本"
                 else -> "已是最新版本"
@@ -537,6 +551,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
+    fun openReleaseNotes() {
+        val url = _updateUiState.value.releasePageUrl ?: return
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        getApplication<Application>().startActivity(intent)
+    }
+
+
+    fun openInstallPermissionSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val context = getApplication<Application>()
+        val intent = Intent(
+            android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:${context.packageName}")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    }
+
+
     private fun observeServiceState() {
 
         viewModelScope.launch {
@@ -561,6 +593,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         }
 
+    }
+
+
+    private fun observePersistedTimer() {
+        viewModelScope.launch {
+            prefs.activeTimer.collect { timer ->
+                if (timer == null || TimerForegroundService.timerState.value !is TimerState.Idle) return@collect
+
+                val remainingSeconds = resolveRemainingSeconds(timer)
+                if (remainingSeconds <= 0) {
+                    prefs.clearActiveTimer()
+                    return@collect
+                }
+
+                _timerState.value = TimerState.Running(
+                    packageName = timer.packageName,
+                    appName = timer.appName,
+                    totalSeconds = timer.totalSeconds,
+                    remainingSeconds = remainingSeconds,
+                    isPaused = timer.isPaused
+                )
+                _currentScreen.value = Screen.ACTIVE_TIMER
+
+                val restoreKey = "${timer.packageName}:${timer.endAtMillis}:${timer.remainingSeconds}:${timer.isPaused}"
+                if (!timer.isPaused && restoredTimerKey != restoreKey) {
+                    restoredTimerKey = restoreKey
+                    restoreRunningTimerService(timer, remainingSeconds)
+                }
+            }
+        }
     }
 
 
@@ -768,6 +830,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun navigateToSettings() {
 
+        refreshInstallPermissionStatus()
+
         _currentScreen.value = Screen.SETTINGS
 
     }
@@ -812,7 +876,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (version.isBlank() || version == location) {
                 throw IOException("Failed to read latest release tag")
             }
-            ReleaseInfo(version = version, apkUrl = buildApkUrl(version))
+            ReleaseInfo(
+                version = version,
+                apkUrl = buildApkUrl(version),
+                releasePageUrl = location
+            )
         } finally {
             connection.disconnect()
         }
@@ -849,12 +917,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun openApkInstaller(apkUri: Uri) {
         val context = getApplication<Application>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
-            val intent = Intent(
-                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                Uri.parse("package:${context.packageName}")
-            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(intent)
+        if (!canInstallUpdateApks()) {
+            refreshInstallPermissionStatus()
+            openInstallPermissionSettings()
             Toast.makeText(context, "请允许 EasyTimer 安装未知来源应用后再安装更新", Toast.LENGTH_LONG).show()
             return
         }
@@ -865,6 +930,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(intent)
+    }
+
+
+    private fun refreshInstallPermissionStatus() {
+        _updateUiState.value = _updateUiState.value.copy(
+            canInstallUpdates = canInstallUpdateApks()
+        )
+    }
+
+
+    private fun canInstallUpdateApks(): Boolean {
+        val context = getApplication<Application>()
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+            context.packageManager.canRequestPackageInstalls()
+    }
+
+
+    private fun resolveRemainingSeconds(timer: PersistedTimer): Int {
+        if (timer.isPaused) return timer.remainingSeconds
+        return ((timer.endAtMillis - System.currentTimeMillis()) / 1000L).toInt()
+    }
+
+
+    private fun restoreRunningTimerService(timer: PersistedTimer, remainingSeconds: Int) {
+        val context = getApplication<Application>()
+        val intent = Intent(context, TimerForegroundService::class.java).apply {
+            action = TimerForegroundService.ACTION_START
+            putExtra(TimerForegroundService.EXTRA_PACKAGE_NAME, timer.packageName)
+            putExtra(TimerForegroundService.EXTRA_APP_NAME, timer.appName)
+            putExtra(TimerForegroundService.EXTRA_TOTAL_SECONDS, timer.totalSeconds)
+            putExtra(TimerForegroundService.EXTRA_DURATION_SECONDS, remainingSeconds)
+            putExtra(TimerForegroundService.EXTRA_SELF_DESTRUCT, selfDestruct.value)
+        }
+        try {
+            context.startForegroundService(intent)
+        } catch (_: ForegroundServiceStartNotAllowedException) {
+            _timerState.value = TimerState.Running(
+                packageName = timer.packageName,
+                appName = timer.appName,
+                totalSeconds = timer.totalSeconds,
+                remainingSeconds = remainingSeconds,
+                isPaused = timer.isPaused
+            )
+        }
     }
 
 
