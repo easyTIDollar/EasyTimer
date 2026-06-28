@@ -151,18 +151,19 @@ class TimerForegroundService : Service() {
     private fun executeForceStop() {
         countDownTimer?.cancel()
         serviceScope.launch {
+            _timerState.value = TimerState.Idle
+            withContext(Dispatchers.IO) {
+                prefs.clearActiveTimer()
+            }
+
             try {
                 withContext(Dispatchers.IO) {
                     RootShellManager.forceStopApp(packageName)
-                    killSelf()
                     try {
                         Runtime.getRuntime().exec(arrayOf("am", "force-stop", packageName)).waitFor()
                     } catch (_: Exception) {}
                 }
             } catch (_: Exception) {}
-
-            _timerState.value = TimerState.Idle
-            clearPersistedTimer()
 
             val closedNotification = NotificationCompat.Builder(this@TimerForegroundService, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -177,6 +178,7 @@ class TimerForegroundService : Service() {
 
             stopForeground(STOP_FOREGROUND_DETACH)
             stopSelf()
+            killSelf()
         }
     }
 
